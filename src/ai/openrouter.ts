@@ -62,13 +62,34 @@ export async function chatCompletion(
   return content;
 }
 
-/** Pull a JSON object out of a model response (tolerates code fences / prose). */
+/** Pull a JSON value out of a model response (tolerates code fences / prose). */
 export function extractJson(content: string): any {
   let s = content.trim();
   const fence = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(s);
   if (fence) s = fence[1].trim();
-  const start = s.indexOf('{');
-  const end = s.lastIndexOf('}');
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
-  return JSON.parse(s);
+  // Prefer a straight parse — handles clean objects AND top-level arrays, which
+  // the old first-"{"/last-"}" slice would have mangled or dropped.
+  try {
+    return JSON.parse(s);
+  } catch {
+    /* fall through to a best-effort extraction from surrounding prose */
+  }
+  // Slice out the outermost embedded object or array, preferring whichever
+  // bracket type appears first in the text.
+  const candidates: Array<[number, number]> = [];
+  const objStart = s.indexOf('{');
+  const objEnd = s.lastIndexOf('}');
+  if (objStart >= 0 && objEnd > objStart) candidates.push([objStart, objEnd]);
+  const arrStart = s.indexOf('[');
+  const arrEnd = s.lastIndexOf(']');
+  if (arrStart >= 0 && arrEnd > arrStart) candidates.push([arrStart, arrEnd]);
+  candidates.sort((a, b) => a[0] - b[0]);
+  for (const [a, b] of candidates) {
+    try {
+      return JSON.parse(s.slice(a, b + 1));
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return JSON.parse(s); // no candidate worked → throw for the caller to handle
 }

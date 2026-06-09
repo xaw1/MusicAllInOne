@@ -3,12 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DrumScore</title>
+    <title>Play-Along — practice studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="app" class="app">
       <header class="topbar">
-        <div class="brand"><span class="brand-mark">🥁</span> DrumScore</div>
+        <div class="brand"><span class="brand-mark">🎵</span> Play-Along</div>
 
         <div class="song-meta">
           <span id="song-title" class="song-title">No song loaded</span>
@@ -22,7 +28,7 @@
             </select>
           </label>
           <button id="import-btn" class="btn btn-primary">Import file…</button>
-          <button id="settings-btn" class="btn icon" title="Settings">⚙</button>
+          <button id="settings-btn" class="btn icon" title="Settings" aria-label="Settings">⚙</button>
           <input
             id="file-input"
             type="file"
@@ -40,7 +46,7 @@
             </div>
             <div class="sidebar-hint">
               Click a name to show/hide it in the score. Use the controls to
-              balance the mix or solo the drums.
+              balance the mix or solo the drums. Solo a track or use the Practice panel's selector to focus it.
             </div>
             <div id="track-list" class="track-list"></div>
           </div>
@@ -61,7 +67,7 @@
           <div id="drop-overlay" class="overlay drop-overlay">
             <div class="overlay-box drop-box">
               <div class="drop-icon">⬇</div>
-              <div>Drop a Guitar Pro or MusicXML file to load it</div>
+              <div>Drop a Guitar Pro / MusicXML file (drums, sax, guitar…) to load it</div>
             </div>
           </div>
         </main>

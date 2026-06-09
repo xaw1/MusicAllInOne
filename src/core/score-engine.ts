@@ -18,6 +18,7 @@ import * as alphaTab from '@coderline/alphatab';
 import type { AppStore, PlaybackSettings, TrackInfo } from './store';
 import type { DrumColorSettings } from './colors';
 import { noteDrumMidi, noteDrumVoice } from './drums';
+import { detectInstrument } from './instrument/detect';
 
 /** A single drum hit's expressive detail, for the visualisation. */
 export interface DrumHit {
@@ -175,6 +176,7 @@ export class ScoreEngine {
       index: t.index,
       name: t.name && t.name.trim() ? t.name : `Track ${t.index + 1}`,
       isPercussion: isPercussionTrack(t),
+      instrument: detectInstrument(t).id,
       volume: 1,
       mute: false,
       solo: false,

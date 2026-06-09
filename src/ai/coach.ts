@@ -5,6 +5,11 @@
 
 import type { ScoreEngine } from '../core/score-engine';
 import { buildDrumTimeline, buildGrid } from '../core/timeline';
+import {
+  computeAutoSticking,
+  computePreciseSticking,
+  getStickingMode,
+} from '../core/sticking-algo';
 import { serializeUniqueBars } from './serialize';
 import { chatCompletion, extractJson } from './openrouter';
 import { getApiKey, getModel } from './key-store';
@@ -76,8 +81,14 @@ export async function runStickingAnalysis(engine: ScoreEngine): Promise<void> {
     throw new Error('The model did not return valid JSON. See Settings → AI → View log.');
   }
 
-  // Map each pattern's R/L array back onto EVERY bar that uses that pattern.
-  const hands = new Map<string, Hand>();
+  // Seed with the instant algorithmic sticking so the AI pass REFINES rather
+  // than replaces it — any hit the model omits keeps its offline R/L instead of
+  // going blank.
+  const hands =
+    getStickingMode() === 'simple'
+      ? computeAutoSticking(timeline)
+      : computePreciseSticking(timeline);
+  // Map each returned pattern's R/L array back onto EVERY bar that uses it.
   const byId = new Map(patterns.map((p) => [p.id, p]));
   for (const pr of parsed?.patterns ?? []) {
     const pat = byId.get(Number(pr?.id));
@@ -93,12 +104,21 @@ export async function runStickingAnalysis(engine: ScoreEngine): Promise<void> {
   }
 
   const sections: SectionTip[] = Array.isArray(parsed?.sections)
-    ? parsed.sections.map((x: any) => ({
-        fromBar: Number(x?.fromBar) || 0,
-        toBar: Number(x?.toBar) || 0,
-        tip: String(x?.tip ?? ''),
-      }))
+    ? parsed.sections
+        .map((x: any) => ({
+          fromBar: Number(x?.fromBar) || 0,
+          toBar: Number(x?.toBar) || 0,
+          tip: String(x?.tip ?? ''),
+        }))
+        .filter((s: SectionTip) => s.fromBar >= 1 && s.toBar >= 1 && s.tip)
     : [];
+
+  // If the user loaded a different song while this request was in flight, drop
+  // the result rather than stamp the wrong song's sticking onto the new one.
+  if (engine.api.score !== score) {
+    aiLog('info', 'Discarded a stale analysis (the song changed mid-request).');
+    return;
+  }
 
   setSticking({
     hands,

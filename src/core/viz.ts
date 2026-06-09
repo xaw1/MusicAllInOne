@@ -44,6 +44,12 @@ export interface VizSettings {
   noteFill: number;
   /** Gap in px from a note box edge to its lane edge. */
   laneMargin: number;
+  /** Show R/L sticking letters under the sheet notation. */
+  sheetSticking: boolean;
+  /** Live mic score-follower on (melodic instruments): grade pitch + timing. */
+  follow: boolean;
+  /** Follower grading strictness (Easy/Average/Strict cents + ms bands). */
+  followTolerance: 'easy' | 'average' | 'strict';
   /** 'float' = draggable card; 'right' = pinned to the right edge (no overlap). */
   dock: 'float' | 'right';
   /** Width of the right-docked panel, in pixels. */
@@ -66,7 +72,10 @@ export const DEFAULT_VIZ: VizSettings = {
   lookaheadBeats: 8,
   noteFill: 0.92,
   laneMargin: 1,
-  dock: 'float',
+  sheetSticking: true,
+  follow: false,
+  followTolerance: 'average',
+  dock: 'right',
   dockWidth: 360,
   kit: null,
 };

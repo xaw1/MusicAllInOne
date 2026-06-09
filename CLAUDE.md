@@ -5,9 +5,16 @@
 > yourself, then play along at adjustable speed with the rest of the band
 > synthesised underneath. In the spirit of Songsterr / Melodics, but free.
 
-**Status:** Stages 0, 1, 1.5 shipped, plus the falling-notes highway and
-**Stage 3 (AI sticking + tips via OpenRouter) v1**. Stage 2 (notation editor) is
-parked at the user's request.
+**Status:** Stages 0, 1, 1.5, **3** (AI sticking + tips via OpenRouter) shipped,
+plus the falling-notes highway, **multi-instrument support** (drums + saxophone
+fingering chart + a pitched piano-roll highway, auto-detected per track), an
+installable **PWA**, a wind/melodic practice layer (**chromatic tuner + cents
+meter + drone + real-time monophonic pitch detection**, `src/audio/`), and
+**Stage 5 v1 (Microphone follow)** — a live mic **score-follower**
+(`src/core/follower.ts` + `follow-engine.ts`) that grades pitch + onset against
+the focused melodic line and flashes the highway. The
+follower's no-instrument validation strategy is researched in
+`docs/research/stage5/`. Stage 2 (notation editor) is parked at the user's request.
 
 ---
 

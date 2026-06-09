@@ -32,6 +32,9 @@ export function createTrackList(
     engine.setVisibleTracks(visible);
   }
 
+  const instLabel = (id: string) =>
+    ({ drums: 'Drums', saxophone: 'Sax', pitched: 'Pitched' } as Record<string, string>)[id] ?? id;
+
   function build(tracks: TrackInfo[]): void {
     container.innerHTML = '';
     cards.clear();
@@ -46,7 +49,7 @@ export function createTrackList(
           <div class="track-name" title="Show / hide in score">
             <span class="eye">👁</span>
             <span class="name-text"></span>
-            ${t.isPercussion ? '<span class="badge">drums</span>' : ''}
+            <span class="badge badge-${t.instrument}">${instLabel(t.instrument)}</span>
           </div>
           <div class="track-buttons">
             <button class="mini-btn mute" title="Mute">M</button>

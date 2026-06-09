@@ -35,12 +35,22 @@ export function saveSettings(settings: PlaybackSettings): void {
 }
 
 export function getLastSongId(): number | null {
-  const raw = localStorage.getItem(LAST_SONG_KEY);
-  return raw ? Number(raw) : null;
+  try {
+    const raw = localStorage.getItem(LAST_SONG_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null; // reject NaN / junk
+  } catch {
+    return null;
+  }
 }
 export function setLastSongId(id: number | null): void {
-  if (id == null) localStorage.removeItem(LAST_SONG_KEY);
-  else localStorage.setItem(LAST_SONG_KEY, String(id));
+  try {
+    if (id == null) localStorage.removeItem(LAST_SONG_KEY);
+    else localStorage.setItem(LAST_SONG_KEY, String(id));
+  } catch {
+    /* storage unavailable (private mode); ignore */
+  }
 }
 
 // ----------------------------------------------------------------- songs (IndexedDB)
@@ -82,6 +92,12 @@ function tx<T>(
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
         t.oncomplete = () => db.close();
+        t.onabort = () => {
+          // An aborted/errored transaction must still release the connection,
+          // or repeated failures leak handles and can block future DB upgrades.
+          reject(t.error ?? req.error ?? new Error('IndexedDB transaction aborted'));
+          db.close();
+        };
       }),
   );
 }

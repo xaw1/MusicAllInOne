@@ -26,7 +26,7 @@ import {
   type KeyMap,
 } from '../input/keybinds';
 import { getApiKey, setApiKey, getModel, setModel } from '../ai/key-store';
-import { listModels } from '../ai/openrouter';
+import { listModels, type ModelInfo } from '../ai/openrouter';
 import { DEFAULT_MODEL } from '../ai/coach';
 import { getStickingMode, setStickingMode } from '../core/sticking-algo';
 import { applyAutoSticking } from '../ai/autostick';
@@ -81,6 +81,9 @@ const ACTION_LABELS: Record<string, string> = {
 export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
   let colors: DrumColorSettings = loadDrumColors();
   let keys: KeyMap = loadKeybinds();
+  // Fetched once and reused across re-renders, so editing colours/keybinds does
+  // not re-hit the network on every render().
+  let cachedModels: ModelInfo[] | null = null;
 
   // Push the loaded scheme into the engine so it applies on the next score load.
   engine.setDrumColors(colors);
@@ -134,7 +137,16 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
     const a2k = actionToKey();
     const viz = getViz();
     body.innerHTML = `
-      <section class="settings-section">
+      <div class="settings-tabs">
+        <button class="settings-tab is-active" data-tab="visual">Visualisation</button>
+        <button class="settings-tab" data-tab="highway">Highway</button>
+        <button class="settings-tab" data-tab="appearance">Appearance</button>
+        <button class="settings-tab" data-tab="sticking">Sticking</button>
+        <button class="settings-tab" data-tab="ai">AI</button>
+        <button class="settings-tab" data-tab="keybinds">Keybinds</button>
+      </div>
+
+      <section class="settings-section is-active" data-tabpane="visual">
         <h3>Visualisation</h3>
         <label class="settings-row">
           <input type="checkbox" class="opt-showkit" ${viz.showKit ? 'checked' : ''} />
@@ -158,6 +170,16 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
           <span>Approach rings on the kit (osu-style)</span>
         </label>
         <label class="settings-row">
+          <input type="checkbox" class="opt-sheetstick" ${viz.sheetSticking ? 'checked' : ''} />
+          <span>R / L sticking letters under the sheet</span>
+        </label>
+        <label class="settings-row">
+          <span>Follow grading (mic score-follower)</span>
+          <select class="opt-followtol">
+            <option value="easy" ${viz.followTolerance === 'easy' ? 'selected' : ''}>Easy</option>
+            <option value="average" ${viz.followTolerance === 'average' ? 'selected' : ''}>Average</option>
+            <option value="strict" ${viz.followTolerance === 'strict' ? 'selected' : ''}>Strict</option>
+          </select>
           <input type="checkbox" class="opt-ghost" ${viz.ghostSticks ? 'checked' : ''} />
           <span>Ready-sticks — show where each hand is heading</span>
         </label>
@@ -172,7 +194,7 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
         </label>
       </section>
 
-      <section class="settings-section">
+      <section class="settings-section" data-tabpane="highway">
         <h3>Highway</h3>
         <label class="settings-row">
           <input type="checkbox" class="opt-highway" ${viz.showHighway ? 'checked' : ''} />
@@ -200,7 +222,7 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
         </label>
       </section>
 
-      <section class="settings-section">
+      <section class="settings-section" data-tabpane="appearance">
         <h3>Appearance</h3>
         <label class="settings-row">
           <input type="checkbox" class="opt-colorize" ${colors.enabled ? 'checked' : ''} />
@@ -218,7 +240,7 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
         <button class="btn settings-reset-colors">Reset colours</button>
       </section>
 
-      <section class="settings-section">
+      <section class="settings-section" data-tabpane="sticking">
         <h3>Sticking</h3>
         <label class="settings-row stack">
           <span>Auto sticking style</span>
@@ -230,7 +252,7 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
         <p class="settings-hint">Computed instantly on load, no network. The AI button below overrides this and adds coaching tips.</p>
       </section>
 
-      <section class="settings-section">
+      <section class="settings-section" data-tabpane="ai">
         <h3>AI coach <span class="settings-sub">— OpenRouter</span></h3>
         <label class="settings-row stack">
           <span>OpenRouter API key</span>
@@ -245,7 +267,7 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
         <button class="btn settings-viewlog" type="button">View AI log</button>
       </section>
 
-      <section class="settings-section">
+      <section class="settings-section" data-tabpane="keybinds">
         <h3>Keybinds <span class="settings-sub">— used by the notation editor (Stage 2)</span></h3>
         <div class="keybind-grid">
           ${ACTION_ORDER.map(
@@ -278,6 +300,12 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
     limbs.onchange = () => setViz({ limbColours: limbs.checked });
     const approach = body.querySelector('.opt-approach') as HTMLInputElement;
     approach.onchange = () => setViz({ approachRings: approach.checked });
+    const sheetStick = body.querySelector('.opt-sheetstick') as HTMLInputElement;
+    sheetStick.onchange = () => setViz({ sheetSticking: sheetStick.checked });
+
+    const followTol = body.querySelector('.opt-followtol') as HTMLSelectElement;
+    followTol.onchange = () =>
+      setViz({ followTolerance: followTol.value as 'easy' | 'average' | 'strict' });
     const ghost = body.querySelector('.opt-ghost') as HTMLInputElement;
     ghost.onchange = () => setViz({ ghostSticks: ghost.checked });
     const ghostOp = body.querySelector('.opt-ghostop') as HTMLInputElement;
@@ -324,16 +352,20 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
     const aikey = body.querySelector('.opt-aikey') as HTMLInputElement;
     const aimodel = body.querySelector('.opt-aimodel') as HTMLInputElement;
     const aiList = body.querySelector('#ai-model-list') as HTMLDataListElement;
-    const loadModels = async () => {
-      const models = await listModels(getApiKey() ?? undefined);
-      aiList.innerHTML = models
+    const fillModelList = () => {
+      if (!cachedModels) return;
+      aiList.innerHTML = cachedModels
         .slice(0, 400)
         .map((m) => `<option value="${m.id}"></option>`)
         .join('');
     };
+    const loadModels = async () => {
+      cachedModels = await listModels(getApiKey() ?? undefined);
+      fillModelList();
+    };
     aikey.onchange = () => {
       setApiKey(aikey.value.trim());
-      void loadModels();
+      void loadModels(); // refetch only when the key actually changes
     };
     aimodel.onchange = () => setModel(aimodel.value.trim());
     (body.querySelector('.settings-viewlog') as HTMLElement).onclick = () => openAiLog();
@@ -344,7 +376,10 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
       applyAutoSticking(engine);
     };
 
-    void loadModels();
+    // Paint from cache synchronously; hit the network only once (or after a key
+    // change), never on every re-render.
+    fillModelList();
+    if (!cachedModels) void loadModels();
 
     // Appearance wiring
     const colorize = body.querySelector('.opt-colorize') as HTMLInputElement;
@@ -381,6 +416,17 @@ export function createSettingsPanel(engine: ScoreEngine): { open: () => void } {
       saveKeybinds(keys);
       render();
     };
+
+    // Tab switching
+    const tabs = body.querySelectorAll<HTMLElement>('.settings-tab');
+    const panes = body.querySelectorAll<HTMLElement>('[data-tabpane]');
+    tabs.forEach((tab) => {
+      tab.onclick = () => {
+        const key = tab.dataset.tab;
+        tabs.forEach((t) => t.classList.toggle('is-active', t === tab));
+        panes.forEach((p) => p.classList.toggle('is-active', p.getAttribute('data-tabpane') === key));
+      };
+    });
   }
 
   return {

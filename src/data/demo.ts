@@ -9,8 +9,8 @@
 ---------------------------------------------------------------------------- */
 
 export const DEMO_TEX = `
-\\title "DrumScore Demo"
-\\subtitle "Import a Guitar Pro or MusicXML file — or write your own"
+\\title "Demo groove"
+\\subtitle "Import a Guitar Pro or MusicXML file, then focus any track in the Practice panel"
 \\tempo 100
 
 \\track "Keys"

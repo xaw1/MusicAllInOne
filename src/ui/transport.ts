@@ -77,7 +77,9 @@ export function createTransport(
 
     <div class="group">
       <button class="btn" data-act="ai" title="AI sticking + practice tips for this song">AI</button>
-      <button class="btn toggle" data-act="kit" title="Show / hide the drum kit">Kit</button>
+      <button class="btn" data-act="tuner" title="Tuner &amp; drone — pitch + intonation for wind/melodic practice">Tuner</button>
+      <button class="btn toggle" data-act="follow" title="Follow — grade your playing live against the score (melodic instruments; needs a mic)">Follow</button>
+      <button class="btn toggle" data-act="kit" title="Show / hide the practice panel">Practice</button>
       <button class="btn icon" data-act="print" title="Print / export PDF">🖨</button>
     </div>
   `;
@@ -97,6 +99,9 @@ export function createTransport(
   const zoom = $<HTMLSelectElement>('zoom');
   const layout = $<HTMLSelectElement>('layout');
   const print = $<HTMLButtonElement>('print');
+  stopBtn.setAttribute('aria-label', 'Stop');
+  playBtn.setAttribute('aria-label', 'Play / Pause');
+  print.setAttribute('aria-label', 'Print / export PDF');
 
   const patchSettings = (patch: Partial<PlaybackSettings>) =>
     store.set((st) => ({ settings: { ...st.settings, ...patch } }));
@@ -160,6 +165,11 @@ export function createTransport(
   kit.onclick = () => setViz({ showKit: !getViz().showKit });
   subscribeViz((v) => kit.classList.toggle('active', v.showKit));
 
+  // Live score-follower toggle (the practice panel owns the FollowEngine + mic).
+  const follow = $<HTMLButtonElement>('follow');
+  follow.onclick = () => setViz({ follow: !getViz().follow });
+  subscribeViz((v) => follow.classList.toggle('active', v.follow));
+
   // AI sticking + tips
   const ai = $<HTMLButtonElement>('ai');
   ai.onclick = async () => {
@@ -186,6 +196,7 @@ export function createTransport(
       (el.tagName === 'INPUT' ||
         el.tagName === 'SELECT' ||
         el.tagName === 'TEXTAREA' ||
+        el.tagName === 'BUTTON' ||
         el.isContentEditable);
     if (typing) return;
     e.preventDefault();

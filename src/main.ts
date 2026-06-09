@@ -14,6 +14,8 @@ import { createTrackList } from './ui/track-list';
 import { createDrumKit } from './ui/drum-kit';
 import { createSettingsPanel } from './ui/settings-panel';
 import { createAiPanel } from './ui/ai-panel';
+import { Tuner } from './ui/tuner';
+import { SheetOverlay } from './ui/sheet-overlay';
 import { toast } from './ui/toast';
 import { loadDrumColors } from './core/colors';
 import { applyAutoSticking } from './ai/autostick';
@@ -55,9 +57,15 @@ const engine = new ScoreEngine(mainEl, viewportEl, store, settings, drumColors);
 createTransport(transportEl, engine, store);
 createTrackList(trackListEl, engine, store);
 createDrumKit(engine);
+new SheetOverlay(engine, viewportEl, mainEl);
 const settingsPanel = createSettingsPanel(engine);
 settingsBtn.onclick = () => settingsPanel.open();
 createAiPanel(); // coach tips modal — auto-opens after an AI analysis
+
+// Tuner & drone (pitch + intonation for wind/melodic practice), opened from the transport.
+const tuner = new Tuner();
+const tunerBtn = transportEl.querySelector('[data-act="tuner"]') as HTMLButtonElement | null;
+if (tunerBtn) tunerBtn.onclick = () => tuner.open();
 
 // Instant offline sticking on every song load (precise DP by default; "simple"
 // heuristic if chosen in Settings). The AI button can override with tips.
@@ -89,6 +97,12 @@ function extOf(name: string): string {
   return m ? m[1] : '';
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) =>
+    c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;',
+  );
+}
+
 async function refreshSongList(selectedId?: number): Promise<void> {
   const songs = await getAllSongs();
   songSelect.innerHTML =
@@ -96,8 +110,8 @@ async function refreshSongList(selectedId?: number): Promise<void> {
     songs
       .map(
         (s) =>
-          `<option value="${s.id}" ${s.id === selectedId ? 'selected' : ''}>${
-            s.name
+          `<option value="${s.id}"${s.id === selectedId ? ' selected' : ''}>${
+            escapeHtml(s.name)
           }</option>`,
       )
       .join('');
@@ -174,20 +188,26 @@ window.addEventListener('drop', (e) => {
 
 // ----------------------------------------------------------------- boot
 async function boot(): Promise<void> {
-  await refreshSongList();
-  const lastId = getLastSongId();
-  if (lastId != null) {
-    const rec = await getSong(lastId);
-    if (rec) {
-      store.set({ loadingText: `Loading ${rec.name}…` });
-      const ok = engine.loadBytes(rec.bytes);
-      if (ok) {
-        songSelect.value = String(lastId);
-        return;
+  try {
+    await refreshSongList();
+    const lastId = getLastSongId();
+    if (lastId != null) {
+      const rec = await getSong(lastId);
+      if (rec) {
+        store.set({ loadingText: `Loading ${rec.name}…` });
+        const ok = engine.loadBytes(rec.bytes);
+        if (ok) {
+          songSelect.value = String(lastId);
+          return;
+        }
       }
     }
+  } catch (err) {
+    // IndexedDB can be unavailable (private mode, disabled, quota). Never let
+    // that strand the app on the loading overlay — fall through to the demo.
+    console.warn('[DrumScore] song library unavailable; loading demo', err);
   }
-  // First run (or no saved song): load the bundled demo.
+  // First run (or no saved song, or a storage failure): load the bundled demo.
   store.set({ loadingText: 'Loading demo…' });
   engine.loadTex(DEMO_TEX);
 }

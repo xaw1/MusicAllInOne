@@ -24,6 +24,8 @@ export type TrackInfo = {
   index: number;
   name: string;
   isPercussion: boolean;
+  /** Instrument family id: 'drums' | 'saxophone' | 'pitched'. */
+  instrument: string;
   /** Per-track gain multiplier applied on top of the authored volume. */
   volume: number;
   mute: boolean;
@@ -112,7 +114,9 @@ export class Store<T extends object> {
   }
 
   private emit(): void {
-    for (const l of this.listeners) l(this.state);
+    // Snapshot first: a listener may subscribe/unsubscribe (mutating the Set)
+    // while we notify, which would otherwise skip or double-fire listeners.
+    for (const l of [...this.listeners]) l(this.state);
   }
 }
 

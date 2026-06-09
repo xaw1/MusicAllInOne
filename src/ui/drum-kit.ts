@@ -20,16 +20,22 @@ import {
   type KitPiece,
 } from '../core/drums';
 import {
-  buildDrumTimeline,
   buildGrid,
   firstIndexAtOrAfter,
-  type DrumEvent,
 } from '../core/timeline';
 import {
   getViz, subscribeViz, setViz, saveKitGeometry, saveDockWidth, type VizSettings,
 } from '../core/viz';
 import { getSticking, subscribeSticking, type Hand } from '../ai/sticking';
 import { Highway } from './highway';
+import { FollowEngine } from '../core/follow-engine';
+import { toast } from './toast';
+import { detectInstrument } from '../core/instrument/detect';
+import type { PlayEvent } from '../core/instrument/types';
+import { FingeringChart } from './fingering-chart';
+import { SaxophoneInstrument } from '../core/instrument/saxophone';
+import type { Instrument } from '../core/instrument/types';
+import { noteName } from '../core/pitch';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -52,7 +58,10 @@ const SVG = `
     <radialGradient id="ds-head" cx="40%" cy="32%" r="75%"><stop offset="0%" stop-color="#4b5160"/><stop offset="100%" stop-color="#222730"/></radialGradient>
     <radialGradient id="ds-kick" cx="50%" cy="36%" r="72%"><stop offset="0%" stop-color="#4b5160"/><stop offset="100%" stop-color="#1d212a"/></radialGradient>
     <radialGradient id="ds-cym" cx="44%" cy="38%" r="72%"><stop offset="0%" stop-color="#d8c372"/><stop offset="60%" stop-color="#a8923f"/><stop offset="100%" stop-color="#6c5d2c"/></radialGradient>
+    <radialGradient id="ds-floor" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#000" stop-opacity="0.5"/><stop offset="65%" stop-color="#000" stop-opacity="0.18"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient>
   </defs>
+
+  <ellipse class="kit-floor" cx="240" cy="172" rx="216" ry="30" fill="url(#ds-floor)"/>
 
   <ellipse id="kit-crash" class="kit-piece" cx="120" cy="52" rx="40" ry="13" fill="url(#ds-cym)"/>
   <ellipse class="kit-groove" cx="120" cy="52" rx="26" ry="8"/><ellipse class="kit-bell" cx="120" cy="52" rx="6" ry="3"/>
@@ -95,7 +104,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 
 export function createDrumKit(engine: ScoreEngine): void {
   let viz: VizSettings = getViz();
-  let timeline: DrumEvent[] = [];
+  let timeline: PlayEvent[] = [];
 
   // ----------------------------------------------------------- floating card
   const card = document.createElement('div');
@@ -103,9 +112,10 @@ export function createDrumKit(engine: ScoreEngine): void {
   card.innerHTML = `
     <div class="kit-float-head">
       <span class="kit-title">Drum kit</span>
+      <span class="kit-grade" hidden></span>
       <span class="kit-head-actions">
         <button class="kit-pin" title="Dock to the right / float">⇥</button>
-        <button class="kit-float-close" title="Hide (re-enable from the Kit button)">✕</button>
+        <button class="kit-float-close" title="Hide (re-enable from the Practice button)">✕</button>
       </span>
     </div>
     <div class="kit-float-body">
@@ -139,6 +149,7 @@ export function createDrumKit(engine: ScoreEngine): void {
     card.style.top = `${clamp(bt + e.clientY - sy, 0, window.innerHeight - card.offsetHeight)}px`;
   });
   head.addEventListener('pointerup', () => { if (dragging) { dragging = false; persistGeometry(); } });
+  head.addEventListener('pointercancel', () => { dragging = false; });
 
   // resize while docked: drag the left edge to set width
   const dockHandle = card.querySelector('.kit-dock-resize') as HTMLElement;
@@ -157,6 +168,7 @@ export function createDrumKit(engine: ScoreEngine): void {
     dragW = false;
     saveDockWidth(Math.round(card.getBoundingClientRect().width));
   });
+  dockHandle.addEventListener('pointercancel', () => { dragW = false; });
 
   if ('ResizeObserver' in window) {
     let first = true;
@@ -169,6 +181,7 @@ export function createDrumKit(engine: ScoreEngine): void {
       } else {
         persistGeometry();
       }
+      fitHighway(getViz()); // re-fill a pitched highway when the panel resizes
     }).observe(card);
   }
 
@@ -241,10 +254,101 @@ export function createDrumKit(engine: ScoreEngine): void {
   const stage = card.querySelector('.kit-stage') as HTMLElement;
   const highway = new Highway(canvas, engine);
 
-  engine.onScore((score) => {
-    timeline = buildDrumTimeline(score);
-    highway.setTimeline(timeline);
+  // Live score-follower (Stage 5): grades the player's mic against the focused
+  // melodic track. Flashes the hit line + keeps a running good/total tally.
+  const follow = new FollowEngine(engine);
+  const gradeEl = card.querySelector('.kit-grade') as HTMLElement;
+  let followPending = false;
+  follow.onResolve((_res, kind) => {
+    highway.flashVerdict(kind);
+    const s = follow.summary();
+    gradeEl.textContent = `✓${s.good} ~${s.close} ✗${s.bad}`;
+    gradeEl.dataset.kind = kind;
+  });
+  // tint recently-played notes on the highway by their verdict as they slide past
+  highway.setVerdictLookup((i) => follow.verdictKindFor(i));
+
+  const fingering = new FingeringChart();
+  fingering.el.style.display = 'none';
+  stage.parentElement!.appendChild(fingering.el);
+
+  let activeInstrument: Instrument | null = null;
+  let allTracks: any[] = [];
+
+  // instrument/track switcher in the header
+  const switcher = document.createElement('select');
+  switcher.className = 'kit-switcher';
+  (card.querySelector('.kit-head-actions') as HTMLElement).prepend(switcher);
+  switcher.onchange = () => {
+    const idx = Number(switcher.value);
+    const t = allTracks[idx];
+    if (t) focusTrack(t);
+  };
+
+  function focusTrack(track: any): void {
+    const score = engine.api.score;
+    if (!score) return;
+    const instrument = detectInstrument(track);
+    activeInstrument = instrument;
+    const tl = instrument.buildTimeline(score, track);
+    timeline = tl;
+    highway.setLanes(instrument.lanes(tl));
+    highway.setTimeline(tl);
     highway.setGrid(buildGrid(score));
+    follow.setTimeline(tl);
+    const isDrums = instrument.id === 'drums';
+    const isSax = instrument.id === 'saxophone';
+    stage.style.display = isDrums ? 'flex' : 'none';
+    fingering.el.style.display = isSax ? 'flex' : 'none';
+    // Re-size the highway for the new instrument: fixed height when a kit/chart
+    // sits below (drums/sax), or fill the panel for pitched instruments.
+    fitHighway(viz);
+    requestAnimationFrame(() => fitHighway(viz));
+    (card.querySelector('.kit-title') as HTMLElement).textContent = instrument.label;
+    if (viz.showKit && (viz.approachRings || isSax)) startRings(); else stopRings();
+    syncFollow();
+  }
+
+  // Start/stop the live follower to match the Follow toggle + the focused
+  // instrument (melodic only). Opening the mic is async + may be denied.
+  function syncFollow(): void {
+    const want = viz.follow && !!activeInstrument && activeInstrument.id !== 'drums';
+    if (want && !follow.active && !followPending) {
+      followPending = true;
+      gradeEl.textContent = '♪ listening…';
+      gradeEl.hidden = false;
+      follow
+        .start()
+        .then(() => { followPending = false; })
+        .catch(() => {
+          followPending = false;
+          gradeEl.hidden = true;
+          toast('Follow needs microphone access — check the browser permission.');
+          setViz({ follow: false });
+        });
+    } else if (!want && follow.active) {
+      follow.stop();
+      gradeEl.hidden = true;
+    } else if (!want) {
+      gradeEl.hidden = true;
+    }
+  }
+
+  engine.onScore((score) => {
+    allTracks = score?.tracks ?? [];
+    // populate switcher (skip empty tracks)
+    switcher.innerHTML = allTracks
+      .map((t, i) => `<option value="${i}">${(t?.name ?? `Track ${i + 1}`).replace(/[<>&]/g, '')}</option>`)
+      .join('');
+    const focus =
+      allTracks.find((t) => {
+        const pi = t?.playbackInfo;
+        return (pi && (pi.primaryChannel === 9 || pi.secondaryChannel === 9)) ||
+          /drum|perc|kit|schlag|bater/i.test(t?.name ?? '');
+      }) ?? allTracks.find((t) => t?.playbackInfo) ?? allTracks[0];
+    const focusIdx = allTracks.indexOf(focus);
+    if (focusIdx >= 0) switcher.value = String(focusIdx);
+    focusTrack(focus);
   });
 
   // ----------------------------------------------------------- kit cues
@@ -392,6 +496,7 @@ export function createDrumKit(engine: ScoreEngine): void {
 
   // ----------------------------------------------------------- approach rings (rAF)
   function updateRings(): void {
+    if (activeInstrument && activeInstrument.id === 'saxophone') { updateFingering(); return; }
     const show = viz.showKit && viz.approachRings && timeline.length > 0;
     if (!show) {
       rings.forEach((r) => (r.style.opacity = '0'));
@@ -402,6 +507,7 @@ export function createDrumKit(engine: ScoreEngine): void {
     let i = firstIndexAtOrAfter(timeline, now);
     for (; i < timeline.length; i++) {
       const ev = timeline[i];
+      if (!ev.piece) continue;
       const dt = ev.tick - now;
       if (dt > RING_LEAD) break;
       if (dt < 0) continue;
@@ -414,6 +520,45 @@ export function createDrumKit(engine: ScoreEngine): void {
       ring.style.opacity = String(0.18 + (1 - frac) * 0.5);
       ring.style.stroke = colourOf(piece);
     }
+  }
+
+  function updateFingering(): void {
+    if (!viz.showKit || timeline.length === 0 || !(activeInstrument instanceof SaxophoneInstrument)) {
+      fingering.setActive(null, null, '');
+      return;
+    }
+    const now = engine.currentTick;
+    // current = the latest note at/just before now; next = first note after now
+    let curEv: PlayEvent | null = null;
+    let nextEv: PlayEvent | null = null;
+    for (const ev of timeline) {
+      if (ev.tick <= now) curEv = ev;
+      else { nextEv = ev; break; }
+    }
+    const sax = activeInstrument;
+    const curKeys = curEv ? sax.fingering(curEv.written) : null;
+    const nextKeys = nextEv ? sax.fingering(nextEv.written) : null;
+    const label = curEv ? noteName(curEv.written) : '';
+    fingering.setActive(curKeys, nextKeys, label);
+  }
+  // Drive the rings only while they're actually shown — an always-on rAF would
+  // burn a frame every ~16ms for the life of the app even with the kit hidden.
+  let ringRaf = 0;
+  let ringRunning = false;
+  const ringLoop = () => {
+    if (!ringRunning) return;
+    updateRings();
+    ringRaf = requestAnimationFrame(ringLoop);
+  };
+  function startRings(): void {
+    if (ringRunning) return;
+    ringRunning = true;
+    ringRaf = requestAnimationFrame(ringLoop);
+  }
+  function stopRings(): void {
+    ringRunning = false;
+    cancelAnimationFrame(ringRaf);
+    rings.forEach((r) => (r.style.opacity = '0'));
   }
   // Where a hand's ghost should be at `now`: travels from its previous hit to
   // its next target (ease-out), then hovers there until the strike.
@@ -527,11 +672,31 @@ export function createDrumKit(engine: ScoreEngine): void {
     }
   }
 
+  // Size the highway canvas. Drums/sax use a fixed height (the kit or fingering
+  // chart sits below). Pitched instruments have no diagram below, so the highway
+  // is measured to fill the panel — a <canvas> won't reliably flex-grow, so we
+  // set an explicit pixel height from the panel's available space.
+  function fitHighway(v: VizSettings): void {
+    const fill = !!activeInstrument && activeInstrument.id !== 'drums' && activeInstrument.id !== 'saxophone';
+    if (!fill) {
+      canvas.style.height = `${v.highwayHeight}px`;
+    } else {
+      const body = canvas.parentElement;
+      const cs = body ? getComputedStyle(body) : null;
+      const pad = cs ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) : 20;
+      const avail = (body?.clientHeight ?? v.highwayHeight) - pad;
+      canvas.style.height = `${Math.max(160, Math.round(avail))}px`;
+    }
+    highway.resize();
+  }
+
   function applyHighway(v: VizSettings): void {
     if (v.showKit && v.showHighway) {
       canvas.style.display = 'block';
-      canvas.style.height = `${v.highwayHeight}px`;
-      highway.resize();
+      fitHighway(v);
+      // The panel's final height is only known after layout settles — re-fit next
+      // frame so a pitched highway fills the panel exactly (no empty gap below).
+      requestAnimationFrame(() => fitHighway(v));
       highway.start();
     } else {
       canvas.style.display = 'none';
@@ -544,6 +709,10 @@ export function createDrumKit(engine: ScoreEngine): void {
     stage.style.minHeight = '120px';
     applyDock(v);
     applyHighway(v);
+    if (v.showKit && (v.approachRings || activeInstrument?.id === 'saxophone')) startRings();
+    else stopRings();
     (card.querySelector('.kit-pin') as HTMLElement).classList.toggle('active', v.dock === 'right');
+    follow.setTolerance(v.followTolerance);
+    syncFollow();
   });
 }

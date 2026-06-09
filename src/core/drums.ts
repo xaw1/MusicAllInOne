@@ -56,6 +56,9 @@ export function midiToLimb(midi: number): Limb {
 export function noteDrumMidi(note: any, track: any): number {
   const arts = track?.percussionArticulations;
   const idx = note?.percussionArticulation;
+  // Guard: a missing/non-numeric articulation must not leak `undefined` into
+  // the MIDI maps (it would silently drop the hit from the highway/rings/kit).
+  if (typeof idx !== 'number') return -1; // unknown drum → maps to null/"other"
   if (Array.isArray(arts) && idx >= 0 && idx < arts.length && arts[idx]) {
     return arts[idx].outputMidiNumber;
   }

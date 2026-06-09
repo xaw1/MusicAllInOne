@@ -61,7 +61,7 @@ export function buildDrumTimeline(score: any): DrumEvent[] {
 }
 
 /** Index of the first event whose tick >= the given tick (binary search). */
-export function firstIndexAtOrAfter(events: DrumEvent[], tick: number): number {
+export function firstIndexAtOrAfter(events: { tick: number }[], tick: number): number {
   let lo = 0;
   let hi = events.length;
   while (lo < hi) {
